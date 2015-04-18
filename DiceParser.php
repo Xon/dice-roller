@@ -19,7 +19,8 @@ You can combine attributes with another, and also use macros (see below) to invo
 
 /*
 EBNF Grammer:
- statement    = repeat | reroll | round | explode | count | expression ( ";" )
+ statement    = expression_modifer | expression ( ";" )
+ expression_modifer = repeat | reroll | round | explode | count
 
  repeat       = ("repeat" | "sum") number expression
 
@@ -39,20 +40,15 @@ EBNF Grammer:
 class DiceParser
 {
     var $tokenizer = null;
-    var $output = '';
-    var $data;
-    var $parsed = "";
-    var $dice_created = false;
-    var $indentlevel = 0;
-    var $tempVarnameSeed = 0;
 
-    var $dice_op = [
-        "D"=> ["Name" => "Dice",         "CallBack" => "Roll" , 'chain' => false],
-        "H"=> ["Name" => "Take Highest", "CallBack" => "TakeHighest" , 'chain' => true],
-        "L"=> ["Name" => "Take Lowest",  "CallBack" => "TakeLowest" , 'chain' => true],
-        "I"=> ["Name" => "Drop Lowest",  "CallBack" => "DropLowest" , 'chain' => true],
+    var $data;
+
+    public static $dice_op = [
+        "D"=> ["Name" => "Dice",         "CallBack" => "Roll" , 'chain' => false],       // example; 1d6
+        //"H"=> ["Name" => "Take Highest", "CallBack" => "TakeHighest" , 'chain' => true], // expands to xd10Hy
+        //"L"=> ["Name" => "Take Lowest",  "CallBack" => "TakeLowest" , 'chain' => true],  // expands to xd10Ly
+        //"I"=> ["Name" => "Drop Lowest",  "CallBack" => "DropLowest" , 'chain' => true],  // expands to xd10Iy
         "U"=> ["Name" => "Fudge",        "CallBack" => "RollFudge" , 'chain' => false ],
-        "N"=> ["Name" => "Unique",       "CallBack" => "Unique" , 'chain' => true],
 /*
 Hero System damage rolls: total result is counted as stun damage. On top of that, body damage is calculated by counting ones as zero, 2-5 as 1, and sixes as 2 points of body damage. You can also use the "*" operator for the stun multiplier.
 Example: 4B6 / with stun multiplier: 4B6*3
@@ -67,7 +63,7 @@ Example: 4V6
     var $default_roll_type = "Roll";
     var $default_dice_modifier = "sum";
 
-    var $dice_modifier = [
+    public static $dice_modifier_prefix = [
         "sum"=> ["Name"=> "Return Roll",
              "CallBack" => "SumDice" ,
              "arg" => 0,
@@ -76,11 +72,13 @@ Example: 4V6
              "CallBack" => "CountDice" ,
              "arg" => 0,
             ],
-        "Z"=> ["Name"=> "Take Highest X Rolls",
-             "CallBack" => "TakeNHighest" ,
-             "arg" => 1,
-             "next" => "sum",
+        "repeat"=> ["Name"=> "Repeat Dice",
+             "CallBack" => "Repeat" ,
+             "arg" => 0,
             ],
+    ];
+
+    public static $dice_modifier_suffix = [
         "E"=> ["Name"=> "Count Successes",
              "CallBack" => "DieResultGreaterThan" ,
              "arg" => 1,
@@ -121,26 +119,6 @@ Example: 4D6X4
     public function __construct($data)
     {
         $this->data = preg_replace('/\s{2,}/', ' ', strtoupper($data));
-        $this->AppendOutputLine('$diceresults = [];');
-    }
-
-    public function AppendOutput($data, $follow_indenting = false)
-    {
-        if ($follow_indenting)
-        {
-            if ($this->indentlevel > 0)
-                $this->output .= str_repeat("\t",$this->indentlevel);
-            $this->output .= $data;
-        }
-        else
-            $this->output .= " ". $data;
-    }
-
-    public function AppendOutputLine($data = "")
-    {
-        if ($this->indentlevel > 0)
-            $this->output .= str_repeat("\t",$this->indentlevel);
-        $this->output .= $data."\n";
     }
 
     private function ConsumeToken($expected)
@@ -149,23 +127,19 @@ Example: 4D6X4
         {
             $value = $this->tokenizer->Value;
             $this->tokenizer->NextToken();
-
-            $this->parsed .= ' '. $value;
             return $value;
         }
         else
         {
-        echo "--------\n";
-        echo substr($this->tokenizer->text,$this->tokenizer->Token->Position)."\n";
-        echo "--------\n";
-        echo $this->output . "\n";
-        echo "--------\n";
-            throw new AbortDiceParsingException("Unexpected token: ". $this->tokenizer->Token->TokenName . ", Value: ". $this->tokenizer->Value);
+           $parsed = substr($this->data, 0, $this->tokenizer->Position);
+           throw new AbortDiceParsingException("Unexpected token: ". $this->tokenizer->Token->TokenName . ", Value: ". $this->tokenizer->Value ." after: ". $parsed);
         }
     }
 
     public function Parse()
     {
+        $tree = array();
+
         $this->tokenizer = new DiceTokenizer($this->data);
         $this->tokenizer->NextToken();
         while(true)
@@ -176,7 +150,7 @@ Example: 4D6X4
             if  ($this->tokenizer->Token->TokenId == DiceToken::END)
                 break;
 
-            $this->ParseStatement();
+            $tree[] = $this->ParseStatement();
 
             if ($this->tokenizer->Token->TokenId == DiceToken::SemiColon)
             {
@@ -188,11 +162,12 @@ Example: 4D6X4
 
         if  ($this->tokenizer->Token->TokenId == DiceToken::END)
         {
-            return $this->output;
+            return $tree;
         }
 
         // unknown details!
-        echo "Unexpected token: ". ($this->tokenizer->Token->TokenId == DiceToken::UNKNOWN ? $this->tokenizer->Token->TokenName : $this->tokenizer->Value) ."\n" ;
+        $parsed = substr($this->data, 0, $this->tokenizer->Position);
+        echo "Unexpected token: ". ($this->tokenizer->Token->TokenId == DiceToken::UNKNOWN ? $this->tokenizer->Token->TokenName : $this->tokenizer->Value) ." after: ". $parsed ."\n" ;
         do
         {
             echo $this->tokenizer->Token->TokenName . "|" .$this->tokenizer->Value. "\n";
@@ -204,119 +179,132 @@ Example: 4D6X4
         return null;
     }
 
-    public function ParseStatement()
+    protected function ParseStatement()
     {
-        $this->AppendOutputLine('$dice = new DiceEngine();');
-
-
-
         if ($this->tokenizer->Token->TokenId == DiceToken::Text)
         {
-            if ($this->tokenizer->Value == "REPEAT" || $this->tokenizer->Value == "SUM")
-                $this->ParseRepeatStatement();
+            $dice_modifier_data = $this->tokenizer->Value;
+            if (isset(self::$dice_modifier_prefix[$dice_modifier_data]))
+            {
+                return $this->ParseModifierExpressionStatement();
+            }
             else
-                $this->ParseExpressionStatement();
+            {
+                throw new AbortDiceParsingException("Unknown dice operation modifier: ". $dice_modifier_data);
+            }
         }
         else
-            $this->ParseExpressionStatement();
-
-        $this->AppendOutputLine('$diceresults[] = ["rolls" => $dice->rolls, "output" => $output, "special" => $dice->SpecialRolls ];');
-        //$this->AppendOutputLine();
-        $this->AppendOutputLine('var_export($diceresults);');
+        {
+            return $this->ParseExpressionStatement();
+        }
     }
 
-    public function ParseExpressionStatement()
+    protected function makeContext($operation, array $arguments = array())
     {
-        $this->AppendOutput('$output =', true);
-        $this->ParseExpression();
-        $this->AppendOutputLine(";");
+        return array(
+            'op' => $operation,
+            'args' => $arguments,
+            'children' => array()
+        );
     }
 
-    public function ParseRepeatStatement()
+    protected function ParseExpressionStatement()
     {
-        $this->ConsumeToken(DiceToken::Text);
+        return $this->ParseExpression();
+    }
+
+    protected function ParseModifierExpressionStatement()
+    {
+        $modifier = $this->ConsumeToken(DiceToken::Text);
         $number = $this->ConsumeToken(DiceToken::Number);
 
-        $this->tempVarnameSeed += 1;
-        $index_varname = '$index'. $this->tempVarnameSeed;
-
-        $this->AppendOutputLine('$output = 0;');
-        $this->AppendOutputLine("for (".$index_varname." = 0; ".$index_varname." < ".$number."; ".$index_varname."++)");
-        $this->AppendOutputLine("{");
-
-        $this->indentlevel += 1;
-        $this->AppendOutput('$output +=', true);
-        $this->ParseExpression();
-        $this->indentlevel -= 1;
-        $this->AppendOutputLine(";");
-
-
-        $this->AppendOutputLine("}");
+        $context = $this->makeContext($modifier, array($number));
+        $context['children'][] = $this->ParseExpression();
+        return $context;
     }
 
-    public function ParseExpression()
+    protected function mergeChildren($op, array &$context, $child)
     {
-        $this->ParseTerm();
+        if (isset($child['op']) && $child['op'] == $op)
+        {
+            $context['children'] = array_merge($context['children'], $child['children']);
+        }
+        else
+        {
+            $context['children'][] = $child;
+        }
+    }
+
+    protected function ParseExpression()
+    {
+        $context = $this->ParseTerm();
 
         if ($this->tokenizer->Token->TokenId == DiceToken::Addition)
         {
             $this->ConsumeToken(DiceToken::Addition);
-            $this->AppendOutput("+");
 
-            $this->ParseExpression();
+            $new_sibling = $context;
+            $context = $this->makeContext('+');
+            $context['children'][] = $new_sibling;
+            $this->mergeChildren('+', $context, $this->ParseExpression());
         }
         else if ($this->tokenizer->Token->TokenId == DiceToken::Subtraction)
         {
             $this->ConsumeToken(DiceToken::Subtraction);
-            $this->AppendOutput("-");
 
-            $this->ParseExpression();
+            $new_sibling = $context;
+            $context = $this->makeContext('-');
+            $context['children'][] = $new_sibling;
+            $this->mergeChildren('-', $context, $this->ParseExpression());
         }
+        return $context;
     }
 
-    public function ParseTerm()
+    protected function ParseTerm()
     {
-        $this->ParseFactor();
+        $context = $this->ParseFactor();
 
         if ($this->tokenizer->Token->TokenId == DiceToken::Multiplication)
         {
             $this->ConsumeToken(DiceToken::Multiplication);
-            $this->AppendOutput("*");
-
-            $this->ParseTerm();
+            $new_sibling = $context;
+            $context = $this->makeContext('*');
+            $context['children'][] = $new_sibling;
+            $this->mergeChildren('*',$context, $this->ParseTerm());
         }
         else if ($this->tokenizer->Token->TokenId == DiceToken::Integer_Division)
         {
             $this->ConsumeToken(DiceToken::Integer_Division);
-            $this->AppendOutput("/");
-
-            $this->ParseTerm();
+            $new_sibling = $context;
+            $context = $this->makeContext('/');
+            $context['children'][] = $new_sibling;
+            $this->mergeChildren('/',$context, $this->ParseTerm());
         }
+        return $context;
     }
 
-    public function ParseFactor()
+    protected function ParseFactor()
     {
         if ($this->tokenizer->Token->TokenId == DiceToken::OpenParentheses)
         {
             $this->ConsumeToken(DiceToken::OpenParentheses);
-            $this->AppendOutput("(");
-            $this->ParseExpression();
+            $context = $this->ParseExpression();
             $this->ConsumeToken(DiceToken::CloseParentheses);
-            $this->AppendOutput(")");
+            return $context;
         }
         else if ($this->tokenizer->Token->TokenId == DiceToken::Number &&
                  $this->tokenizer->NextToken->TokenId == DiceToken::Text)
-            $this->ParseRoll();
+            return $this->ParseRoll();
         else
-            $this->ParseNumber();
+            return $this->ParseNumber();
     }
 
-    public function ParseNumber()
+    protected function ParseNumber()
     {
-        $this->AppendOutput($this->ConsumeToken(DiceToken::Number));
+        return $this->ConsumeToken(DiceToken::Number);
     }
 
-    public function ParseRoll()
+    protected function ParseRoll()
     {
         $dice_count = 1;
         if ($this->tokenizer->Token->TokenId == DiceToken::Number)
@@ -327,16 +315,19 @@ Example: 4D6X4
         $dice_op_data = $this->ConsumeToken(DiceToken::Text);
         $dice_size = $this->ConsumeToken(DiceToken::Number);
 
-        if (isset($this->dice_op[$dice_op_data]))
+        if (isset(self::$dice_op[$dice_op_data]))
         {
-            $dice_op = $this->dice_op[$dice_op_data];
+            $dice_op = self::$dice_op[$dice_op_data];
             if (!$dice_op["chain"])
                 $root_call = $dice_op["CallBack"];
             else
                 $root_call = $this->default_roll_type;
 
-            $call = '$dice->'.$root_call.'('.$dice_count .', '. $dice_size.')->';
+            //$context = $this->makeContext($root_call);
 
+
+            $context = $this->makeContext($dice_op_data, array($dice_count, $dice_size));
+/*
 
             if ($dice_op["chain"] && isset($dice_op["CallBack"]) && $dice_op["CallBack"])
                 $call .= $dice_op["CallBack"].'()->';
@@ -344,13 +335,13 @@ Example: 4D6X4
             if ($this->tokenizer->Token->TokenId == DiceToken::Text)
             {
                 $dice_modifier_data = $this->ConsumeToken(DiceToken::Text);
-                if (isset($this->dice_modifier[$dice_modifier_data]))
-                    $dice_modifier = $this->dice_modifier[$dice_modifier_data];
+                if (isset(self::$dice_modifier_suffix[$dice_modifier_data]))
+                    $dice_modifier = self::$dice_modifier_suffix[$dice_modifier_data];
                 else
                     throw new AbortDiceParsingException("Unknown dice operation modifier: ". $dice_modifier_data);
             }
             else
-                $dice_modifier = $this->dice_modifier[$this->default_dice_modifier];
+                $dice_modifier = self::$dice_modifier_suffix[$this->default_dice_modifier];
             while (true)
             {
                 $args = [];
@@ -372,10 +363,8 @@ Example: 4D6X4
                 }
                 break;
             }
-
-
-
-            $this->AppendOutput($call) ;
+*/
+            return $context;
         }
         else
             throw new AbortDiceParsingException("Unknown dice operation: ". $dice_op_data);
