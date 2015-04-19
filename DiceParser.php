@@ -1,6 +1,7 @@
 <?php
 include_once('DiceTokenizer.php');
 include_once('DiceEngine.php');
+include_once('Dice_AST.php');
 
 
 class AbortDiceParsingException extends Exception { }
@@ -42,79 +43,6 @@ class DiceParser
     var $tokenizer = null;
 
     var $data;
-
-    public static $dice_op = [
-        "D"=> ["Name" => "Dice",         "CallBack" => "Roll" , 'chain' => false],       // example; 1d6
-        //"H"=> ["Name" => "Take Highest", "CallBack" => "TakeHighest" , 'chain' => true], // expands to xd10Hy
-        //"L"=> ["Name" => "Take Lowest",  "CallBack" => "TakeLowest" , 'chain' => true],  // expands to xd10Ly
-        //"I"=> ["Name" => "Drop Lowest",  "CallBack" => "DropLowest" , 'chain' => true],  // expands to xd10Iy
-        "U"=> ["Name" => "Fudge",        "CallBack" => "RollFudge" , 'chain' => false ],
-/*
-Hero System damage rolls: total result is counted as stun damage. On top of that, body damage is calculated by counting ones as zero, 2-5 as 1, and sixes as 2 points of body damage. You can also use the "*" operator for the stun multiplier.
-Example: 4B6 / with stun multiplier: 4B6*3
- For "killing"-type damage, use the K operator like this: 4K6*3
-•Wild Die (D6 System): The D6 System has a special rule for one of the dice in each roll, it becomes the "Wild Die". The Wild Die is rolled again as long as it comes up with the max result, but if the first roll is a 1 the next roll as well as the highest result of the other dice becomes a penalty. Two ones make a critical failure.
-Example: 4W6
-You can also roll without the wild die failure option by using the V code:
-Example: 4V6
-*/
-    ];
-
-    var $default_roll_type = "Roll";
-    var $default_dice_modifier = "sum";
-
-    public static $dice_modifier_prefix = [
-        "sum"=> ["Name"=> "Return Roll",
-             "CallBack" => "SumDice" ,
-             "arg" => 0,
-            ],
-        "count"=> ["Name"=> "Count Higher Than",
-             "CallBack" => "CountDice" ,
-             "arg" => 0,
-            ],
-        "repeat"=> ["Name"=> "Repeat Dice",
-             "CallBack" => "Repeat" ,
-             "arg" => 0,
-            ],
-    ];
-
-    public static $dice_modifier_suffix = [
-        "E"=> ["Name"=> "Count Successes",
-             "CallBack" => "DieResultGreaterThan" ,
-             "arg" => 1,
-             "next" => "count",
-             ],
-        "R"=> ["Name"=> "Count Successes with additive re-roll",
-             "CallBack" => "AdditiveRerollOnMax" ,
-             "arg" => 0,
-             "next" => "E",
-             ],
-        "F"=> ["Name"=> "Count Successes minus failures",
-             "CallBack" => "SubtractN" ,
-             "arg" => 0,
-             "next" => "E",
-             ],
-        "M"=> ["Name"=> "Count Successes \"plus\"",
-             "CallBack" => "RerollOnMax" ,
-             "arg" => 0,
-             "next" => "E",
-             ],
-        "S"=> ["Name"=> "Count Successes with everything",
-             "CallBack" => "RerollOnMaxSubtractN" ,
-             "arg" => 0,
-             "next" => "E",
-             ],
-        "X"=> ["Name"=> "Count Maximum possible die result counts as two successes",
-             "CallBack" => "MaxDieDoubleCount" ,
-             "arg" => 0,
-             "next" => "E",
-             ],
-/*
-•Maximum possible die result counts as two successes: to see how many dice rolled equal to or greater than some number, use "X".
-Example: 4D6X4
-*/
-    ];
-
 
     public function __construct($data)
     {
@@ -184,7 +112,7 @@ Example: 4D6X4
         if ($this->tokenizer->Token->TokenId == DiceToken::Text)
         {
             $dice_modifier_data = $this->tokenizer->Value;
-            if (isset(self::$dice_modifier_prefix[$dice_modifier_data]))
+            if (isset(Dice_AST::$dice_modifier_prefix[$dice_modifier_data]))
             {
                 return $this->ParseModifierExpressionStatement();
             }
@@ -244,18 +172,18 @@ Example: 4D6X4
             $this->ConsumeToken(DiceToken::Addition);
 
             $new_sibling = $context;
-            $context = $this->makeContext('+');
+            $context = $this->makeContext(Dice_AST::Addition);
             $context['children'][] = $new_sibling;
-            $this->mergeChildren('+', $context, $this->ParseExpression());
+            $this->mergeChildren(Dice_AST::Addition, $context, $this->ParseExpression());
         }
         else if ($this->tokenizer->Token->TokenId == DiceToken::Subtraction)
         {
             $this->ConsumeToken(DiceToken::Subtraction);
 
             $new_sibling = $context;
-            $context = $this->makeContext('-');
+            $context = $this->makeContext(Dice_AST::Subtraction);
             $context['children'][] = $new_sibling;
-            $this->mergeChildren('-', $context, $this->ParseExpression());
+            $this->mergeChildren(Dice_AST::Subtraction, $context, $this->ParseExpression());
         }
         return $context;
     }
@@ -268,17 +196,17 @@ Example: 4D6X4
         {
             $this->ConsumeToken(DiceToken::Multiplication);
             $new_sibling = $context;
-            $context = $this->makeContext('*');
+            $context = $this->makeContext(Dice_AST::Multiplication);
             $context['children'][] = $new_sibling;
-            $this->mergeChildren('*',$context, $this->ParseTerm());
+            $this->mergeChildren(Dice_AST::Multiplication,$context, $this->ParseTerm());
         }
         else if ($this->tokenizer->Token->TokenId == DiceToken::Integer_Division)
         {
             $this->ConsumeToken(DiceToken::Integer_Division);
             $new_sibling = $context;
-            $context = $this->makeContext('/');
+            $context = $this->makeContext(Dice_AST::Integer_Division);
             $context['children'][] = $new_sibling;
-            $this->mergeChildren('/',$context, $this->ParseTerm());
+            $this->mergeChildren(Dice_AST::Integer_Division,$context, $this->ParseTerm());
         }
         return $context;
     }
@@ -315,9 +243,9 @@ Example: 4D6X4
         $dice_op_data = $this->ConsumeToken(DiceToken::Text);
         $dice_size = $this->ConsumeToken(DiceToken::Number);
 
-        if (isset(self::$dice_op[$dice_op_data]))
+        if (isset(Dice_AST::$dice_op[$dice_op_data]))
         {
-            $dice_op = self::$dice_op[$dice_op_data];
+            $dice_op = Dice_AST::$dice_op[$dice_op_data];
             if (!$dice_op["chain"])
                 $root_call = $dice_op["CallBack"];
             else
@@ -335,13 +263,13 @@ Example: 4D6X4
             if ($this->tokenizer->Token->TokenId == DiceToken::Text)
             {
                 $dice_modifier_data = $this->ConsumeToken(DiceToken::Text);
-                if (isset(self::$dice_modifier_suffix[$dice_modifier_data]))
-                    $dice_modifier = self::$dice_modifier_suffix[$dice_modifier_data];
+                if (isset(Dice_AST::$dice_modifier_suffix[$dice_modifier_data]))
+                    $dice_modifier = Dice_AST::$dice_modifier_suffix[$dice_modifier_data];
                 else
                     throw new AbortDiceParsingException("Unknown dice operation modifier: ". $dice_modifier_data);
             }
             else
-                $dice_modifier = self::$dice_modifier_suffix[$this->default_dice_modifier];
+                $dice_modifier = Dice_AST::$dice_modifier_suffix[$this->default_dice_modifier];
             while (true)
             {
                 $args = [];
