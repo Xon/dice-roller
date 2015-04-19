@@ -8,11 +8,11 @@ class Dice_AST
     const Integer_Division = '/';
     
     public static $dice_op = [
-        "D"=> ["Name" => "Dice",         "CallBack" => "Roll" , 'chain' => false],       // example; 1d6
-        //"H"=> ["Name" => "Take Highest", "CallBack" => "TakeHighest" , 'chain' => true], // expands to xd10Hy
-        //"L"=> ["Name" => "Take Lowest",  "CallBack" => "TakeLowest" , 'chain' => true],  // expands to xd10Ly
-        //"I"=> ["Name" => "Drop Lowest",  "CallBack" => "DropLowest" , 'chain' => true],  // expands to xd10Iy
-        "U"=> ["Name" => "Fudge",        "CallBack" => "RollFudge" , 'chain' => false ],
+        "D"=> ["Name" => "Dice",         "CallBack" => "Roll" , 'expand' => false, 'default_value' => 6 ],       // example; 1d6
+        //"H"=> ["Name" => "Take Highest", "CallBack" => "TakeHighest" , 'expand' => 'D', 'default_value' => 10 ], // expands to xd10Hy
+        //"L"=> ["Name" => "Take Lowest",  "CallBack" => "TakeLowest" ,  'expand' => 'D', 'default_value' => 10 ],  // expands to xd10Ly
+        //"I"=> ["Name" => "Drop Lowest",  "CallBack" => "DropLowest" ,  'expand' => 'D', 'default_value' => 10 ],  // expands to xd10Iy
+        "U"=> ["Name" => "Fudge",        "CallBack" => "RollFudge" , 'expand' => false, 'default_value' => 6 ],
 /*
 Hero System damage rolls: total result is counted as stun damage. On top of that, body damage is calculated by counting ones as zero, 2-5 as 1, and sixes as 2 points of body damage. You can also use the "*" operator for the stun multiplier.
 Example: 4B6 / with stun multiplier: 4B6*3
@@ -28,17 +28,29 @@ Example: 4V6
     var $default_dice_modifier = "sum";
 
     public static $dice_modifier_prefix = [
-        "sum"=> ["Name"=> "Return Roll",
+        "SUM"=> ["Name"=> "Return Roll",
              "CallBack" => "SumDice" ,
-             "arg" => 0,
+             "arg" => 1,
             ],
-        "count"=> ["Name"=> "Count Higher Than",
+        "COUNT"=> ["Name"=> "Count Higher Than",
              "CallBack" => "CountDice" ,
-             "arg" => 0,
+             "arg" => -1,
             ],
-        "repeat"=> ["Name"=> "Repeat Dice",
+        "REPEAT"=> ["Name"=> "Repeat Dice",
              "CallBack" => "Repeat" ,
-             "arg" => 0,
+             "arg" => 1,
+            ],
+        "REROLL"=> ["Name"=> "Reroll Dice",
+              "CallBack" => "Reroll" ,
+              "arg" => -1,
+            ],
+        "ROUND"=> ["Name"=> "Repeat Dice",
+             "CallBack" => "Round" ,
+             "arg" => 1,
+            ],
+        "EXPLODE"=> ["Name"=> "Explode Dice",
+              "CallBack" => "Explode" ,
+             "arg" => -1,
             ],
     ];
 
@@ -46,32 +58,32 @@ Example: 4V6
         "E"=> ["Name"=> "Count Successes",
              "CallBack" => "DieResultGreaterThan" ,
              "arg" => 1,
-             "next" => "count",
+             "next_suffix" => "COUNT",
              ],
         "R"=> ["Name"=> "Count Successes with additive re-roll",
              "CallBack" => "AdditiveRerollOnMax" ,
              "arg" => 0,
-             "next" => "E",
+             "next_prefix" => "E",
              ],
         "F"=> ["Name"=> "Count Successes minus failures",
              "CallBack" => "SubtractN" ,
              "arg" => 0,
-             "next" => "E",
+             "next_prefix" => "E",
              ],
         "M"=> ["Name"=> "Count Successes \"plus\"",
              "CallBack" => "RerollOnMax" ,
              "arg" => 0,
-             "next" => "E",
+             "next_prefix" => "E",
              ],
         "S"=> ["Name"=> "Count Successes with everything",
              "CallBack" => "RerollOnMaxSubtractN" ,
              "arg" => 0,
-             "next" => "E",
+             "next_prefix" => "E",
              ],
         "X"=> ["Name"=> "Count Maximum possible die result counts as two successes",
              "CallBack" => "MaxDieDoubleCount" ,
              "arg" => 0,
-             "next" => "E",
+             "next_prefix" => "E",
              ],
 /*
 •Maximum possible die result counts as two successes: to see how many dice rolled equal to or greater than some number, use "X".

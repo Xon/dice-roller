@@ -20,23 +20,25 @@ You can combine attributes with another, and also use macros (see below) to invo
 
 /*
 EBNF Grammer:
- statement    = expression_modifer | expression ( ";" )
- expression_modifer = repeat | reroll | round | explode | count
+ statement          = [ expression_modifer ] expression ( ";" )
+ expression_modifer = sum | repeat | count | reroll | round | explode
 
- repeat       = ("repeat" | "sum") number expression
+ sum                = "sum" "=" number
+ repeat             = "repeat" "=" number
+ count              = "count" "=" number {"," number}
+ reroll             = "reroll" "=" number {"," number}
+ round              = "round" "=" number
+ explode            = "explode" "=" number {"," number}
 
- reroll       = "reroll"  number {"," number} expression
- round        = "round"   number {"," number} expression
- explode      = "explode" number {"," number} expression
- count        = "count"   number {"," number} expression
-
- expression   = (term ("+" | "-") expr) |  term
- term         = (factor ("*" | "/") term) | factor
- factor       = "(" expr ")" | roll | number
- roll         =  [ number ] , ( "d" | "D" ) , number
- number       =  nonzerodigit , { digit }
- digit        =  nonzerodigit | "0"
- nonzerodigit =  "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+ expression         = (term ("+" | "-") expression) |  term
+ term               = (factor ("*" | "/") term) | factor
+ factor             = "(" expression ")" | roll | number
+ 
+ roll               =  [ number ] ( "d" | "D" ) number
+ 
+ number             =  nonzerodigit , { digit }
+ digit              =  nonzerodigit | "0"
+ nonzerodigit       =  "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
 */
 class DiceParser
 {
@@ -111,19 +113,11 @@ class DiceParser
     {
         if ($this->tokenizer->Token->TokenId == DiceToken::Text)
         {
-            $dice_modifier_data = $this->tokenizer->Value;
-            if (isset(Dice_AST::$dice_modifier_prefix[$dice_modifier_data]))
-            {
-                return $this->ParseModifierExpressionStatement();
-            }
-            else
-            {
-                throw new AbortDiceParsingException("Unknown dice operation modifier: ". $dice_modifier_data);
-            }
+            return $this->ParseModifierExpression();
         }
         else
         {
-            return $this->ParseExpressionStatement();
+            return $this->ParseExpression();
         }
     }
 
@@ -136,17 +130,40 @@ class DiceParser
         );
     }
 
-    protected function ParseExpressionStatement()
+    protected function ParseModifierExpression()
     {
-        return $this->ParseExpression();
-    }
+        $dice_modifier = strtoupper( $this->ConsumeToken(DiceToken::Text) );
+        if (!isset(Dice_AST::$dice_modifier_prefix[$dice_modifier]))
+        {
+            throw new AbortDiceParsingException("Unknown dice operation modifier: ". $dice_modifier);
+        }
 
-    protected function ParseModifierExpressionStatement()
-    {
-        $modifier = $this->ConsumeToken(DiceToken::Text);
-        $number = $this->ConsumeToken(DiceToken::Number);
+        $modifier = Dice_AST::$dice_modifier_prefix[$dice_modifier];
+        $args = array();
+        if ($modifier['arg'] != 0 )
+        {
+            $this->ConsumeToken(DiceToken::Equal);
+            while (true)
+            {
+                $args[] = $this->ConsumeToken(DiceToken::Number);
+                if ($this->tokenizer->Token->TokenId != DiceToken::Comma)
+                {
+                    break;
+                }
+                $this->ConsumeToken(DiceToken::Comma);
+            }
+        }
 
-        $context = $this->makeContext($modifier, array($number));
+        if($modifier['arg'] > 0 && count($args) != $modifier['arg'])
+        {
+            throw new AbortDiceParsingException("Expected ".$modifier['arg']." arguments but got ".count($args)." for the operation modifier: ". $dice_modifier);
+        }
+        else if($modifier['arg'] == -1 && count($args) == 0)
+        {
+            throw new AbortDiceParsingException("Expected at least 1 arguments but got 0 for the operation modifier: ". $dice_modifier);
+        }
+
+        $context = $this->makeContext($dice_modifier, $args);
         $context['children'][] = $this->ParseExpression();
         return $context;
     }
@@ -240,22 +257,48 @@ class DiceParser
             $dice_count = $this->ConsumeToken(DiceToken::Number);
         }
 
-        $dice_op_data = $this->ConsumeToken(DiceToken::Text);
-        $dice_size = $this->ConsumeToken(DiceToken::Number);
+        $dice_op_data = strtoupper($this->ConsumeToken(DiceToken::Text));
 
         if (isset(Dice_AST::$dice_op[$dice_op_data]))
         {
             $dice_op = Dice_AST::$dice_op[$dice_op_data];
-            if (!$dice_op["chain"])
-                $root_call = $dice_op["CallBack"];
-            else
-                $root_call = $this->default_roll_type;
 
+            if ($this->tokenizer->Token->TokenId == DiceToken::Number)
+            {
+                $dice_size = $this->ConsumeToken(DiceToken::Number);
+            }
+            else
+            {
+                $dice_size = $dice_op['default_value'];
+            }
+
+            if ($dice_op['expand'])
+            {
+                if (empty(Dice_AST::$dice_op[$dice_op['expand']]))
+                {
+                    throw new AbortDiceParsingException("Invalid internal configuration for: ". $dice_op_data);
+                }
+                $dice_modifier_data = $dice_size;
+                $dice_size = $dice_op['default_value'];
+            }
+
+            $context = $this->makeContext($dice_op_data, array($dice_count, $dice_size));
+            
+            /*
             //$context = $this->makeContext($root_call);
 
 
-            $context = $this->makeContext($dice_op_data, array($dice_count, $dice_size));
-/*
+
+            if ($this->tokenizer->Token->TokenId == DiceToken::Text)
+            {
+                $dice_modifier_data = $this->ConsumeToken(DiceToken::Text);
+                if (isset(Dice_AST::$dice_modifier_suffix[$dice_modifier_data]))
+                    $dice_modifier = Dice_AST::$dice_modifier_suffix[$dice_modifier_data];
+                else
+                    throw new AbortDiceParsingException("Unknown dice operation modifier: ". $dice_modifier_data);
+            }
+            else
+                $dice_modifier = Dice_AST::$dice_modifier_suffix[$this->default_dice_modifier];
 
             if ($dice_op["chain"] && isset($dice_op["CallBack"]) && $dice_op["CallBack"])
                 $call .= $dice_op["CallBack"].'()->';
