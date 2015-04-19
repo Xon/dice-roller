@@ -94,7 +94,7 @@ class DiceParser
         }
 
         // unknown details!
-        $parsed = substr($this->data, 0, $this->tokenizer->Position);
+        $parsed = substr($this->data, 0, $this->tokenizer->Token->Position - 1);
         echo "Unexpected token: ". ($this->tokenizer->Token->TokenId == DiceToken::UNKNOWN ? $this->tokenizer->Token->TokenName : $this->tokenizer->Value) ." after: ". $parsed ."\n" ;
         do
         {
